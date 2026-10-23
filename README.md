@@ -1,30 +1,67 @@
-# Custom Docker Images (Caddy)
+# Custom Caddy Web Server (with Cloudflare & RFC2136 DNS)
 
-[![Build Status](https://github.com/HaraldSilva/caddy/actions/workflows/build-caddy.yml/badge.svg)](https://github.com/HaraldSilva/caddy/actions)
-[![Registry](https://img.shields.io/badge/registry-ghcr.io-blue)](https://github.com/HaraldSilva?tab=packages)
+[![Docker Pulls](https://img.shields.io/docker/pulls/haraldsilva/caddy.svg)](https://hub.docker.com/r/haraldsilva/caddy)
+[![GitHub Registry](https://img.shields.io/badge/registry-ghcr.io-blue)](https://github.com/HaraldSilva?tab=packages)
 
-This repository contains automated Docker builds for our customized **Caddy Web Server** production environments, hosted on the GitHub Container Registry (`ghcr.io`).
+This repository provides an automated, lightweight, multi-stage build of the **[Caddy Web Server](https://caddyserver.com/)**, bundling essential DNS provider plugins for automated ACME DNS-01 SSL/TLS certificate validation.
 
----
-
-## 🔄 Automated Update & Build Schedule
-
-To ensure all images remain secure and up-to-date with the latest upstream security patches without unnecessary rebuilds, this repository uses a **Smart Digest Check** via GitHub Actions:
-
-* **Check Interval:** Every **12 hours** (`00:00` and `12:00` UTC).
-* **Smart Trigger:** The workflow inspects the SHA256 manifest digest of the official upstream images on Docker Hub (`caddy:2`).
-* **Conditional Build:** A new build and push to `ghcr.io` is **only triggered if the upstream base image has changed** or if changes are pushed directly to the `main` branch of this repository.
+Published concurrently to **Docker Hub** and **GitHub Container Registry (GHCR)**.
 
 ---
 
-## 📦 1. Custom Caddy Image (`ghcr.io/haraldsilva/caddy`)
+## 🔌 Included DNS Modules
 
-Built using a clean multi-stage build based on the official `caddy:2-builder` and `caddy:2` Alpine images.
+Built with `xcaddy` using an Alpine production base:
+* **[`caddy-dns/cloudflare`](https://github.com/caddy-dns/cloudflare)**: Enables DNS-01 ACME challenges for domains managed by Cloudflare.
+* **[`caddy-dns/rfc2136`](https://github.com/caddy-dns/rfc2136)**: Enables DNS-01 ACME challenges via standard dynamic DNS updates (BIND9, PowerDNS, Knot, etc.).
 
-### Included Modules (via `xcaddy`)
-* [`github.com/caddy-dns/cloudflare`](https://github.com/caddy-dns/cloudflare) – Enables ACME DNS-01 challenges via Cloudflare DNS.
-* [`github.com/caddy-dns/rfc2136`](https://github.com/caddy-dns/rfc2136) – Enables ACME DNS-01 challenges via RFC2136 dynamic DNS updates.
+---
 
-### Usage
+## 🔄 Automated Update Schedule
+
+* **Interval:** Every **6 hours** (`00:00`, `06:00`, `12:00`, `18:00` UTC).
+* **Smart Digest Check:** The GitHub Action compares upstream Alpine/Caddy base image digests before triggering compilation.
+* **Minimal Footprint:** Uses a two-stage build where the Go build environment is discarded, leaving a clean production runtime image (~45 MB).
+
+---
+
+## 📦 Pulling the Image
+
+### From Docker Hub
+```bash
+docker pull haraldsilva/caddy:latest
+```
+
+### From GitHub Container Registry (GHCR)
 ```bash
 docker pull ghcr.io/haraldsilva/caddy:latest
+```
+
+---
+
+## 🚀 Docker Compose Example
+
+```yaml
+services:
+  caddy:
+    image: haraldsilva/caddy:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 QUIC
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+---
+
+## 🔗 Registry Links
+* **Docker Hub:** [https://hub.docker.com/r/haraldsilva/caddy](https://hub.docker.com/r/haraldsilva/caddy)
+* **GitHub Container Registry:** [https://github.com/HaraldSilva/caddy/pkgs/container/caddy](https://github.com/HaraldSilva/caddy/pkgs/container/caddy)
