@@ -1,0 +1,117 @@
+name: Smart Build Custom Caddy Image
+
+on:
+  push:
+    branches: [ "main" ]
+  schedule:
+    # Check every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+env:
+  DOCKERHUB_REPO: haraldsilva/caddy
+  GHCR_REPO: ghcr.io/haraldsilva/caddy
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for upstream updates from caddy:2
+        id: check_update
+        env:
+          UPSTREAM_IMAGE: caddy:2
+          CUSTOM_IMAGE: ${{ env.DOCKERHUB_REPO }}:latest
+        run: |
+          UPSTREAM_DIGEST=$(docker buildx imagetools inspect "$UPSTREAM_IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          echo "Upstream Digest ($UPSTREAM_IMAGE): $UPSTREAM_DIGEST"
+          echo "upstream_digest=$UPSTREAM_DIGEST" >> $GITHUB_OUTPUT
+
+          CADDY_VERSION=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+          echo "Current Caddy Version: $CADDY_VERSION"
+          echo "caddy_version=$CADDY_VERSION" >> $GITHUB_OUTPUT
+
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "Triggered by '${{ github.event_name }}' -> Enforcing rebuild."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          LAST_BASE_DIGEST=$(docker buildx imagetools inspect "$CUSTOM_IMAGE" --format '{{index .Image.Config.Labels "org.opencontainers.image.base.digest"}}' 2>/dev/null || echo "none")
+          echo "Last built digest ($CUSTOM_IMAGE): $LAST_BASE_DIGEST"
+
+          if [ "$UPSTREAM_DIGEST" != "$LAST_BASE_DIGEST" ]; then
+            echo "New upstream update detected! Triggering build..."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "No update found. Skipping build."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.check_update.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Dual-Registry Custom Caddy
+        if: steps.check_update.outputs.should_build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          pull: true
+          push: true
+          labels: |
+            org.opencontainers.image.base.name=caddy:2
+            org.opencontainers.image.base.digest=${{ steps.check_update.outputs.upstream_digest }}
+            org.opencontainers.image.version=${{ steps.check_update.outputs.caddy_version }}
+          tags: |
+            ${{ env.DOCKERHUB_REPO }}:latest
+            ${{ env.DOCKERHUB_REPO }}:${{ steps.check_update.outputs.caddy_version }}
+            ${{ env.GHCR_REPO }}:latest
+            ${{ env.GHCR_REPO }}:${{ steps.check_update.outputs.caddy_version }}
+
+      - name: Sync Readme to Docker Hub
+        if: steps.check_update.outputs.should_build == 'true'
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_REPO }}
+          short-description: "Custom lightweight Caddy Web Server with pre-compiled Cloudflare & RFC2136 DNS modules."
+          readme-filepath: ./README.md
+
+      - name: Send Pushover Alert
+        if: steps.check_update.outputs.should_build == 'true'
+        env:
+          PUSHOVER_USER: ${{ secrets.PUSHOVER_USER_KEY }}
+          PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+        run: |
+          if [ -n "$PUSHOVER_USER" ] && [ -n "$PUSHOVER_TOKEN" ]; then
+            curl -s \
+              --form-string "token=${PUSHOVER_TOKEN}" \
+              --form-string "user=${PUSHOVER_USER}" \
+              --form-string "title=🔒 Caddy v${{ steps.check_update.outputs.caddy_version }} Dual-Push Completed" \
+              --form-string "html=1" \
+              --form-string "message=Caddy v${{ steps.check_update.outputs.caddy_version }} has been rebuilt and pushed to both registries.<br><br><b>Docker Hub:</b> <code>${{ env.DOCKERHUB_REPO }}:latest</code><br><b>GHCR:</b> <code>${{ env.GHCR_REPO }}:latest</code>" \
+              --form-string "url=https://hub.docker.com/r/${{ env.DOCKERHUB_REPO }}/tags" \
+              --form-string "url_title=View on Docker Hub" \
+              https://api.pushover.net/1/messages.json
+          fi
