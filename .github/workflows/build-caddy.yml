@@ -88,16 +88,6 @@ jobs:
             ${{ env.GHCR_REPO }}:latest
             ${{ env.GHCR_REPO }}:${{ steps.check_update.outputs.caddy_version }}
 
-      - name: Sync Readme to Docker Hub
-        if: steps.check_update.outputs.should_build == 'true'
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.DOCKERHUB_REPO }}
-          short-description: "Custom lightweight Caddy Web Server with pre-compiled Cloudflare & RFC2136 DNS modules."
-          readme-filepath: ./README.md
-
       - name: Send Pushover Alert
         if: steps.check_update.outputs.should_build == 'true'
         env:
